@@ -123,6 +123,13 @@ class Bot(Client):
                     f"Solution channel: {solution_channel.mention}\n"
                     f"Role: {role.mention}"
                 )
+                await message.channel.send("Now send me the riddle!")
+                riddle = await self.wait_for(
+                    "message", check=lambda m: m.channel == message.channel and m.author == message.author
+                )
+                await level_channel.send(embed=(Embed(title=f"Level {level_id}", description=riddle.content)))
+                await message.channel.send("Riddle has been created! :+1:")
+                await message.channel.send(f"Now go to {solution_channel.mention} and send the solution.")
             elif cmd == "delete":
                 if not await self.is_authorized(message.author):
                     await message.channel.send("You are not authorized to use this command!")
