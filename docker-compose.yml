@@ -1,0 +1,9 @@
+version: '3.7'
+services:
+  status_bot:
+    container_name: riddle-bot
+    image: defelo/riddle-bot:latest
+    restart: always
+    tty: true
+    environment:
+      TOKEN: '[TOKEN]'
