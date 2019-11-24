@@ -71,6 +71,14 @@ class Bot(Client):
             if all_ok:
                 break
 
+    async def on_member_join(self, member: Member):
+        if member.guild.id != self.guild.id:
+            return
+
+        levels = self.get_levels()
+        if levels:
+            await member.add_roles(self.get_level(levels[0])[2])
+
     async def on_message(self, message: Message):
         if message.author == self.user:
             return
