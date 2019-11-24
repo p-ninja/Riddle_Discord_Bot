@@ -2,7 +2,19 @@ import os
 import re
 from typing import Optional
 
-from discord import Client, Message, Member, Guild, CategoryChannel, utils, Embed, Role, PermissionOverwrite, User
+from discord import (
+    Client,
+    Message,
+    Member,
+    Guild,
+    CategoryChannel,
+    utils,
+    Embed,
+    Role,
+    PermissionOverwrite,
+    User,
+    DMChannel,
+)
 from discord import TextChannel
 
 
@@ -77,9 +89,9 @@ class Bot(Client):
 
         await member.send(open("welcome.txt").read().format(user=member.mention))
 
-        levels = self.get_levels()
-        if levels:
-            await member.add_roles(self.get_level(levels[0])[2])
+        _, _, role = self.get_level(1)
+        if role is not None:
+            await member.add_roles(role)
 
     async def on_message(self, message: Message):
         if message.author == self.user:
@@ -195,7 +207,38 @@ class Bot(Client):
                 await message.channel.send(f"{self.get_level_count()} Levels")
             else:
                 await message.channel.send("Unknown command!")
+            return
+
+        if isinstance(message.channel, DMChannel):
+            member: Member = self.guild.get_member(message.author.id)
+            for role in member.roles:
+                match = re.match("^" + role_name(r"(\d+)") + "$", role.name)
+                if match:
+                    level_id = int(match.group(1))
+                    break
+            else:
+                level_channel, _, role = self.get_level(1)
+                if role is not None:
+                    await member.add_roles(role)
+                    await message.channel.send(
+                        "Sorry, du hattest anscheinend noch keine Level-Rolle.\n"
+                        f"Schau jetzt mal in {level_channel.mention} :wink:"
+                    )
                 return
+
+            _, solution_channel, old_role = self.get_level(level_id)
+            async for msg in solution_channel.history():
+                if re.match(msg.content.lower(), message.content.lower()):
+                    level_channel, _, new_role = self.get_level(level_id + 1)
+                    if new_role is not None:
+                        await member.remove_roles(old_role)
+                        await member.add_roles(new_role)
+                        await message.channel.send(f"Richtig! Du hast jetzt Zugriff auf {level_channel.mention}!")
+                    else:
+                        await message.channel.send(f"Richtig! Leider war das aber schon das letzte Rätsel.")
+                    break
+            else:
+                await message.channel.send(f"Deine Antwort zu Level {level_id} ist leider falsch.")
 
 
 Bot().run(os.environ["TOKEN"])
