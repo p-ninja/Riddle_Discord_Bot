@@ -10,5 +10,6 @@ ADD Pipfile.lock /app/
 RUN pipenv sync
 
 ADD riddle_bot.py /app/
+ADD welcome.txt /app/
 
 CMD pipenv run main

@@ -75,6 +75,8 @@ class Bot(Client):
         if member.guild.id != self.guild.id:
             return
 
+        await member.send(open("welcome.txt").read().format(user=member.mention))
+
         levels = self.get_levels()
         if levels:
             await member.add_roles(self.get_level(levels[0])[2])
@@ -191,6 +193,9 @@ class Bot(Client):
                     await message.channel.send("Roles have been sorted.")
             elif cmd == "info":
                 await message.channel.send(f"{self.get_level_count()} Levels")
+            else:
+                await message.channel.send("Unknown command!")
+                return
 
 
 Bot().run(os.environ["TOKEN"])
