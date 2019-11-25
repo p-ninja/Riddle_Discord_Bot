@@ -37,6 +37,7 @@ class Bot(Client):
         self.guild: Optional[Guild] = None
         self.level_category: Optional[CategoryChannel] = None
         self.solution_category: Optional[CategoryChannel] = None
+        self.riddle_master_role: Optional[Role] = None
 
     async def on_ready(self):
         print(f"Logged in as {self.user}")
@@ -44,6 +45,7 @@ class Bot(Client):
         self.guild: Guild = self.get_guild(647130691842342913)
         self.level_category: CategoryChannel = self.guild.get_channel(648205081547767808)
         self.solution_category: CategoryChannel = self.guild.get_channel(647164872357838848)
+        self.riddle_master_role: Role = self.guild.get_role(648616558314389516)
 
     def get_levels(self):
         out = []
@@ -152,6 +154,31 @@ class Bot(Client):
                 await level_channel.send(embed=(Embed(title=f"Level {level_id}", description=riddle.content)))
                 await message.channel.send("Riddle has been created! :+1:")
                 await message.channel.send(f"Now go to {solution_channel.mention} and send the solution.")
+                await message.channel.send(f"After that type `$notify {level_id}` to notify the Riddle Masters :wink:")
+            elif cmd == "notify":
+                if not args:
+                    await message.channel.send("usage: $notify <level-id>")
+                    return
+                else:
+                    if not args[0].isnumeric():
+                        await message.channel.send("Level ID has to be numeric!")
+                        return
+                    level_id = int(args[0])
+
+                level_channel, _, role = self.get_level(level_id)
+                notify_count = 0
+                for member in self.guild.members:
+                    if self.riddle_master_role in member.roles:
+                        await member.remove_roles(self.riddle_master_role)
+                        await member.add_roles(role)
+                        await member.send(
+                            "Hey! Es gibt jetzt ein neues Rätsel auf dem Riddle Server :wink:\n"
+                            f"Schau mal hier: {level_channel.mention}"
+                        )
+                        notify_count += 1
+                await message.channel.send(
+                    f"{notify_count} member{[' has', 's have'][notify_count!=1]} been notified about the new level."
+                )
             elif cmd == "delete":
                 if not await self.is_authorized(message.author):
                     await message.channel.send("You are not authorized to use this command!")
@@ -212,6 +239,10 @@ class Bot(Client):
         if isinstance(message.channel, DMChannel):
             member: Member = self.guild.get_member(message.author.id)
             for role in member.roles:
+                if role.id == self.riddle_master_role.id:
+                    await message.channel.send("Hey, du hast bereits alle Rätsel gelöst :wink:")
+                    return
+
                 match = re.match("^" + role_name(r"(\d+)") + "$", role.name)
                 if match:
                     level_id = int(match.group(1))
@@ -230,11 +261,12 @@ class Bot(Client):
             async for msg in solution_channel.history():
                 if re.match(msg.content.lower(), message.content.lower()):
                     level_channel, _, new_role = self.get_level(level_id + 1)
+                    await member.remove_roles(old_role)
                     if new_role is not None:
-                        await member.remove_roles(old_role)
                         await member.add_roles(new_role)
                         await message.channel.send(f"Richtig! Du hast jetzt Zugriff auf {level_channel.mention}!")
                     else:
+                        await member.add_roles(self.riddle_master_role)
                         await message.channel.send(f"Richtig! Leider war das aber schon das letzte Rätsel.")
                     break
             else:
