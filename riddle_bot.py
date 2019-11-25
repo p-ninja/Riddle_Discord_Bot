@@ -17,6 +17,8 @@ from discord import (
 )
 from discord import TextChannel
 
+BELL = "🔔"
+
 
 def level_name(level_id):
     return f"level-{level_id}"
@@ -38,6 +40,9 @@ class Bot(Client):
         self.level_category: Optional[CategoryChannel] = None
         self.solution_category: Optional[CategoryChannel] = None
         self.riddle_master_role: Optional[Role] = None
+        self.notification_role: Optional[Role] = None
+        self.settings_channel: Optional[TextChannel] = None
+        self.settings_message: Optional[Message] = None
 
     async def on_ready(self):
         print(f"Logged in as {self.user}")
@@ -46,6 +51,11 @@ class Bot(Client):
         self.level_category: CategoryChannel = self.guild.get_channel(648205081547767808)
         self.solution_category: CategoryChannel = self.guild.get_channel(647164872357838848)
         self.riddle_master_role: Role = self.guild.get_role(648616558314389516)
+        self.notification_role: Role = self.guild.get_role(648629386635116586)
+        self.settings_channel: TextChannel = self.guild.get_channel(648630396241707029)
+        async for msg in self.settings_channel.history():
+            self.settings_message: Message = msg
+            break
 
     def get_levels(self):
         out = []
@@ -94,6 +104,24 @@ class Bot(Client):
         _, _, role = self.get_level(1)
         if role is not None:
             await member.add_roles(role)
+
+    async def on_raw_reaction_add(self, payload):
+        if self.settings_message is None:
+            return
+        if self.settings_message.id != payload.message_id or str(payload.emoji) != BELL:
+            return
+
+        member: Message = self.guild.get_member(payload.user_id)
+        await member.add_roles(self.notification_role)
+
+    async def on_raw_reaction_remove(self, payload):
+        if self.settings_message is None:
+            return
+        if self.settings_message.id != payload.message_id or str(payload.emoji) != BELL:
+            return
+
+        member: Message = self.guild.get_member(payload.user_id)
+        await member.remove_roles(self.notification_role)
 
     async def on_message(self, message: Message):
         if message.author == self.user:
@@ -156,6 +184,10 @@ class Bot(Client):
                 await message.channel.send(f"Now go to {solution_channel.mention} and send the solution.")
                 await message.channel.send(f"After that type `$notify {level_id}` to notify the Riddle Masters :wink:")
             elif cmd == "notify":
+                if not await self.is_authorized(message.author):
+                    await message.channel.send("You are not authorized to use this command!")
+                    return
+
                 if not args:
                     await message.channel.send("usage: $notify <level-id>")
                     return
@@ -171,13 +203,14 @@ class Bot(Client):
                     if self.riddle_master_role in member.roles:
                         await member.remove_roles(self.riddle_master_role)
                         await member.add_roles(role)
-                        await member.send(
-                            "Hey! Es gibt jetzt ein neues Rätsel auf dem Riddle Server :wink:\n"
-                            f"Schau mal hier: {level_channel.mention}"
-                        )
-                        notify_count += 1
+                        if self.notification_role in member.roles:
+                            await member.send(
+                                "Hey! Es gibt jetzt ein neues Rätsel auf dem Riddle Server :wink:\n"
+                                f"Schau mal hier: {level_channel.mention}"
+                            )
+                            notify_count += 1
                 await message.channel.send(
-                    f"{notify_count} member{[' has', 's have'][notify_count!=1]} been notified about the new level."
+                    f"{notify_count} member{[' has', 's have'][notify_count != 1]} been notified about the new level."
                 )
             elif cmd == "delete":
                 if not await self.is_authorized(message.author):
@@ -227,11 +260,23 @@ class Bot(Client):
                     await message.channel.send("You are not authorized to use this command!")
                     return
 
-                async with message.channel.typing():
-                    await self.sort_roles()
-                    await message.channel.send("Roles have been sorted.")
+                await self.sort_roles()
+                await message.channel.send("Roles have been sorted.")
             elif cmd == "info":
                 await message.channel.send(f"{self.get_level_count()} Levels")
+            elif cmd == "setup":
+                if not await self.is_authorized(message.author):
+                    await message.channel.send("You are not authorized to use this command!")
+                    return
+
+                self.settings_message = await self.settings_channel.send(
+                    embed=Embed(
+                        title="Settings",
+                        description="Reagiere mit :bell: auf diese Nachricht, um Benachrichtigungen "
+                        "über neue Rätsel zu erhalten",
+                    )
+                )
+                await self.settings_message.add_reaction(BELL)
             else:
                 await message.channel.send("Unknown command!")
             return
