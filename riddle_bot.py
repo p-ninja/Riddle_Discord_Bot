@@ -106,18 +106,18 @@ class Bot(Client):
             await member.add_roles(role)
 
     async def on_raw_reaction_add(self, payload):
-        if self.settings_message is None:
+        if self.settings_message is None or self.settings_message.id != payload.message_id:
             return
-        if self.settings_message.id != payload.message_id or str(payload.emoji) != BELL:
+        if str(payload.emoji) != BELL or payload.user_id == self.user.id:
             return
 
         member: Message = self.guild.get_member(payload.user_id)
         await member.add_roles(self.notification_role)
 
     async def on_raw_reaction_remove(self, payload):
-        if self.settings_message is None:
+        if self.settings_message is None or self.settings_message.id != payload.message_id:
             return
-        if self.settings_message.id != payload.message_id or str(payload.emoji) != BELL:
+        if str(payload.emoji) != BELL or payload.user_id == self.user.id:
             return
 
         member: Message = self.guild.get_member(payload.user_id)
