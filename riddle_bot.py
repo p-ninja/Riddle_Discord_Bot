@@ -27,6 +27,7 @@ config: dict = json.load(open("config.json"))
 GUILD: int = config["guild"]
 NOTIFICATION_ROLE: int = config["notification_role"]
 SETTINGS_CHANNEL: int = config["settings_channel"]
+PREFIX = config["prefix"]
 
 
 def create_embed(**kwargs):
@@ -145,6 +146,9 @@ class Bot(Client):
             _, _, role = self.get_level(cat_name, 1)
             if role is not None:
                 await member.add_roles(role)
+            else:
+                _, _, _, riddle_master_role, _ = self.get_category(name=cat_name)
+                await member.add_roles(riddle_master_role)
             await self.update_leaderboard(cat_name)
 
     async def on_raw_reaction_add(self, payload):
@@ -177,6 +181,9 @@ class Bot(Client):
 
         leaderboard = []
         for member in self.guild.members:
+            if await self.is_authorized(member):
+                continue
+
             for role in member.roles:
                 match = re.match("^" + role_name(category, r"(\d+)") + "$", role.name)
                 if role.id == riddle_master_role.id:
@@ -184,7 +191,7 @@ class Bot(Client):
                 elif match:
                     leaderboard.append((int(match.group(1)) - 1, f"@{member}"))
         leaderboard.sort(reverse=True)
-        max_width = max(len(member) for _, member in leaderboard)
+        max_width = max((len(member) for _, member in leaderboard), default=0)
         description = ["```", "MEMBER".ljust(max_width) + "    SCORE"]
         for score, member in leaderboard[:20]:
             description.append(member.ljust(max_width) + f"    {score}")
@@ -198,7 +205,7 @@ class Bot(Client):
         if message.author == self.user:
             return
 
-        if message.content.startswith("$"):
+        if message.content.startswith(PREFIX):
             cmd, *args = message.content[1:].split()
             if cmd == "add":
                 if not await self.is_authorized(message.author):
@@ -206,7 +213,7 @@ class Bot(Client):
                     return
 
                 if len(args) < 2 or args[0] not in ("category", "level"):
-                    await message.channel.send("usage: $add category|level <category>")
+                    await message.channel.send(f"usage: {PREFIX}add category|level <category>")
                     return
                 category = " ".join(args[1:])
                 if args[0] == "level":
@@ -255,7 +262,7 @@ class Bot(Client):
                     await message.channel.send("Riddle has been created! :+1:")
                     await message.channel.send(f"Now go to {solution_channel.mention} and send the solution.")
                     await message.channel.send(
-                        f"After that type `$notify {category} {level_id}` to notify the Riddle Masters :wink:"
+                        f"After that type `{PREFIX}notify {category} {level_id}` to notify the Riddle Masters :wink:"
                     )
                 else:
                     category_channel: CategoryChannel = await self.guild.create_category(
@@ -283,7 +290,7 @@ class Bot(Client):
                     return
 
                 if len(args) != 2:
-                    await message.channel.send("usage: $notify <category> <level-id>")
+                    await message.channel.send(f"usage: {PREFIX}notify <category-id> <level-id>")
                     return
                 else:
                     if not args[-1].isnumeric():
@@ -320,8 +327,8 @@ class Bot(Client):
                     or (len(args) == 4 and args[0] == "levels")
                 ):
                     await message.channel.send(
-                        "usage: $delete category <category>\n"
-                        "   or: $delete level[s] <category> <level-id> [<level-id>]"
+                        f"usage: {PREFIX}delete category <category-id>\n"
+                        f"   or: {PREFIX}delete level[s] <category-id> <level-id> [<level-id>]"
                     )
                     return
 
@@ -402,7 +409,7 @@ class Bot(Client):
                     embed=create_embed(title="Settings", description=open("texts/settings.txt").read())
                 )
                 await self.settings_message.add_reaction(BELL)
-            elif cmd == "solve":
+            elif cmd in ("solve", "lösen"):
                 if not isinstance(message.channel, DMChannel):
                     await message.delete()
                     await message.channel.send(
@@ -411,7 +418,7 @@ class Bot(Client):
                     return
 
                 if not args:
-                    await message.channel.send("usage: $solve <category>")
+                    await message.channel.send(f"usage: {PREFIX}solve <category-id>")
                     return
 
                 category = " ".join(args)
@@ -500,8 +507,10 @@ class Bot(Client):
                             break
                 embed.add_field(name="TOTAL", value=f"{total} Points", inline=False)
                 await message.channel.send(embed=embed)
+            elif cmd == "help":
+                await message.channel.send(open("texts/help.txt").read().format(prefix=PREFIX))
             else:
-                await message.channel.send("Unknown command!")
+                await message.channel.send(f"Unknown command! Type `{PREFIX}help` to get a list of commands!")
 
     async def fix_member(self, member: Member):
         for cat_id, cat_name in self.get_categories():

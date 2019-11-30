@@ -1,5 +1,6 @@
 {
   "guild": 647130691842342913,
   "notification_role": 648629386635116586,
-  "settings_channel": 648630396241707029
+  "settings_channel": 648630396241707029,
+  "prefix": "!"
 }
