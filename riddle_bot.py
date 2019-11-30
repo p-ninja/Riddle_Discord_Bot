@@ -108,7 +108,7 @@ class Bot(Client):
         return member and member.guild_permissions.administrator
 
     def get_level(self, category, level_id):
-        _, _, category_channel, _ = self.get_category(name=category)
+        _, _, category_channel, _, _ = self.get_category(name=category)
         if category_channel is None:
             return None, None, None
 
@@ -124,13 +124,16 @@ class Bot(Client):
         regex_id = str(category_id or r"\d+")
         regex_name = name or ".*"
         for cat in self.guild.categories:
-            match = re.match("^" + category_name(f"({regex_id})", f"({regex_name})", escaped=True) + "$", cat.name,)
+            match = re.match("^" + category_name(f"({regex_id})", f"({regex_name})", escaped=True) + "$", cat.name)
             if match:
                 category_id, name = match.groups()
                 category_id = int(category_id)
                 category_channel = cat
         riddle_master_role: Optional[Role] = utils.get(self.guild.roles, name=riddle_master_name(name))
-        return category_id, name, category_channel, riddle_master_role
+        leaderboard_channel: Optional[TextChannel] = category_channel and utils.get(
+            category_channel.channels, name="leaderboard"
+        )
+        return category_id, name, category_channel, riddle_master_role, leaderboard_channel
 
     async def on_member_join(self, member: Member):
         if member.guild.id != self.guild.id:
@@ -142,6 +145,7 @@ class Bot(Client):
             _, _, role = self.get_level(cat_name, 1)
             if role is not None:
                 await member.add_roles(role)
+            await self.update_leaderboard(cat_name)
 
     async def on_raw_reaction_add(self, payload):
         if self.settings_message is None or self.settings_message.id != payload.message_id:
@@ -161,6 +165,35 @@ class Bot(Client):
         member: Message = self.guild.get_member(payload.user_id)
         await member.remove_roles(self.notification_role)
 
+    async def update_leaderboard(self, category):
+        _, _, _, riddle_master_role, leaderboard_channel = self.get_category(name=category)
+        async for message in leaderboard_channel.history():
+            if message.author == self.user:
+                break
+        else:
+            message = await leaderboard_channel.send(embed=create_embed())
+
+        level_count = self.get_level_count(category)
+
+        leaderboard = []
+        for member in self.guild.members:
+            for role in member.roles:
+                match = re.match("^" + role_name(category, r"(\d+)") + "$", role.name)
+                if role.id == riddle_master_role.id:
+                    leaderboard.append((level_count, f"@{member}"))
+                elif match:
+                    leaderboard.append((int(match.group(1)) - 1, f"@{member}"))
+        leaderboard.sort(reverse=True)
+        max_width = max(len(member) for _, member in leaderboard)
+        description = ["```", "MEMBER".ljust(max_width) + "    SCORE"]
+        for score, member in leaderboard[:20]:
+            description.append(member.ljust(max_width) + f"    {score}")
+        description.append("```")
+
+        embed = create_embed(title="Leaderboard", description="\n".join(description))
+
+        await message.edit(embed=embed)
+
     async def on_message(self, message: Message):
         if message.author == self.user:
             return
@@ -177,7 +210,7 @@ class Bot(Client):
                     return
                 category = " ".join(args[1:])
                 if args[0] == "level":
-                    _, cat_name, category_channel, _ = self.get_category(category_id=category)
+                    _, cat_name, category_channel, _, _ = self.get_category(category_id=category)
                     if category_channel is None:
                         await message.channel.send("Category does not exist!")
                         return
@@ -225,13 +258,24 @@ class Bot(Client):
                         f"After that type `$notify {category} {level_id}` to notify the Riddle Masters :wink:"
                     )
                 else:
-                    await self.guild.create_category(category_name(self.get_next_category_id(), category))
+                    category_channel: CategoryChannel = await self.guild.create_category(
+                        category_name(self.get_next_category_id(), category)
+                    )
+                    await category_channel.create_text_channel(
+                        "leaderboard",
+                        overwrites={
+                            self.guild.default_role: PermissionOverwrite(read_messages=True, send_messages=False),
+                            self.guild.me: PermissionOverwrite(read_messages=True, send_messages=True),
+                        },
+                    )
+
                     riddle_master_role: Role = await self.guild.create_role(
-                        name=riddle_master_name(category), color=Color(random.randint(0, 0xFFFFFF))
+                        name=riddle_master_name(category), color=Color(random.randint(0, 0xFFFFFF)), hoist=True
                     )
                     for member in self.guild.members:
                         if member.id != self.user.id:
                             await member.add_roles(riddle_master_role)
+                    await self.update_leaderboard(category)
                     await message.channel.send("Category has been created!")
             elif cmd == "notify":
                 if not await self.is_authorized(message.author):
@@ -248,7 +292,7 @@ class Bot(Client):
                     category = args[0]
                     level_id = int(args[1])
 
-                _, cat_name, _, riddle_master_role = self.get_category(category_id=category)
+                _, cat_name, _, riddle_master_role, _ = self.get_category(category_id=category)
                 level_channel, _, role = self.get_level(cat_name, level_id)
                 notify_count = 0
                 for member in self.guild.members:
@@ -261,6 +305,7 @@ class Bot(Client):
                                 f"Schau mal hier: {level_channel.mention}"
                             )
                             notify_count += 1
+                await self.update_leaderboard(cat_name)
                 await message.channel.send(
                     f"{notify_count} member{[' has', 's have'][notify_count != 1]} been notified about the new level."
                 )
@@ -281,7 +326,7 @@ class Bot(Client):
                     return
 
                 category = args[1]
-                _, cat_name, category_channel, riddle_master_role = self.get_category(category_id=category)
+                _, cat_name, category_channel, riddle_master_role, leaderboard = self.get_category(category_id=category)
                 if args[0] == "category":
                     for level in self.get_levels(cat_name):
                         level_channel, solution_channel, role = self.get_level(cat_name, level)
@@ -291,6 +336,8 @@ class Bot(Client):
                             await solution_channel.delete()
                         if role:
                             await role.delete()
+                    if leaderboard:
+                        await leaderboard.delete()
                     if category_channel:
                         await category_channel.delete()
                     if riddle_master_role:
@@ -335,6 +382,7 @@ class Bot(Client):
                         await level_channel.edit(name=level_name(level - (to_level_id - from_level_id + 1)))
                         await solution_channel.edit(name=solution_name(level - (to_level_id - from_level_id + 1)))
                         await role.edit(name=role_name(cat_name, level - (to_level_id - from_level_id + 1)))
+                    await self.update_leaderboard(cat_name)
 
                 await message.channel.send("Done")
             elif cmd == "info":
@@ -367,7 +415,7 @@ class Bot(Client):
                     return
 
                 category = " ".join(args)
-                _, cat_name, _, riddle_master_role = self.get_category(category_id=category)
+                _, cat_name, _, riddle_master_role, _ = self.get_category(category_id=category)
                 if riddle_master_role is None:
                     await message.channel.send("Tut mir leid, diese Kategorie kenne ich nicht :shrug:")
                     return
@@ -415,8 +463,11 @@ class Bot(Client):
                         break
                 else:
                     await message.channel.send(f"Deine Antwort zu Level {level_id} ist leider falsch.")
+                await self.update_leaderboard(cat_name)
             elif cmd == "fix":
                 await self.fix_member(self.guild.get_member(message.author.id))
+                for _, cat_name in self.get_categories():
+                    await self.update_leaderboard(cat_name)
                 await message.channel.send("Done")
             elif cmd == "fixall":
                 if not await self.is_authorized(message.author):
@@ -426,13 +477,35 @@ class Bot(Client):
                 for member in self.guild.members:
                     if member != self.user:
                         await self.fix_member(member)
+                for _, cat_name in self.get_categories():
+                    await self.update_leaderboard(cat_name)
                 await message.channel.send("Done")
+            elif cmd == "score":
+                member: Member = self.guild.get_member(message.author.id)
+                embed = create_embed(title=f"Score of @{member}")
+                total = 0
+                for _, cat_name in self.get_categories():
+                    _, _, _, riddle_master_role, _ = self.get_category(name=cat_name)
+                    level_count = self.get_level_count(cat_name)
+                    for role in member.roles:
+                        match = re.match("^" + role_name(cat_name, r"(\d+)") + "$", role.name)
+                        points = None
+                        if role.id == riddle_master_role.id:
+                            points = level_count
+                        elif match:
+                            points = int(match.group(1)) - 1
+                        if points is not None:
+                            embed.add_field(name=cat_name, value=f"{points} Points", inline=False)
+                            total += points
+                            break
+                embed.add_field(name="TOTAL", value=f"{total} Points", inline=False)
+                await message.channel.send(embed=embed)
             else:
                 await message.channel.send("Unknown command!")
 
     async def fix_member(self, member: Member):
         for cat_id, cat_name in self.get_categories():
-            _, _, _, riddle_master_role = self.get_category(category_id=cat_id)
+            _, _, _, riddle_master_role, _ = self.get_category(category_id=cat_id)
 
             for role in member.roles:
                 if role.id == riddle_master_role.id:
