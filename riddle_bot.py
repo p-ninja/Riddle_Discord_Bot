@@ -1,6 +1,8 @@
+import asyncio
+import json
 import os
 import re
-from typing import Optional
+from typing import Optional, List
 
 from discord import (
     Client,
@@ -19,6 +21,17 @@ from discord import TextChannel
 
 BELL = "🔔"
 
+config: dict = json.load(open("config.json"))
+GUILD: int = config["guild"]
+NOTIFICATION_ROLE: int = config["notification_role"]
+SETTINGS_CHANNEL: int = config["settings_channel"]
+
+
+def create_embed(**kwargs):
+    embed = Embed(**kwargs)
+    embed.set_footer(text="Bot by @Defelo#2022")
+    return embed
+
 
 def level_name(level_id):
     return f"level-{level_id}"
@@ -28,8 +41,16 @@ def solution_name(level_id):
     return f"solution-{level_id}"
 
 
-def role_name(level_id):
-    return f"Level {level_id}"
+def role_name(category, level_id):
+    return f"{category} - Level {level_id}"
+
+
+def riddle_master_name(category):
+    return f"Master of {category}"
+
+
+def category_name(category):
+    return f"{category} - Levels"
 
 
 class Bot(Client):
@@ -37,9 +58,6 @@ class Bot(Client):
         super().__init__()
 
         self.guild: Optional[Guild] = None
-        self.level_category: Optional[CategoryChannel] = None
-        self.solution_category: Optional[CategoryChannel] = None
-        self.riddle_master_role: Optional[Role] = None
         self.notification_role: Optional[Role] = None
         self.settings_channel: Optional[TextChannel] = None
         self.settings_message: Optional[Message] = None
@@ -47,63 +65,64 @@ class Bot(Client):
     async def on_ready(self):
         print(f"Logged in as {self.user}")
 
-        self.guild: Guild = self.get_guild(647130691842342913)
-        self.level_category: CategoryChannel = self.guild.get_channel(648205081547767808)
-        self.solution_category: CategoryChannel = self.guild.get_channel(647164872357838848)
-        self.riddle_master_role: Role = self.guild.get_role(648616558314389516)
-        self.notification_role: Role = self.guild.get_role(648629386635116586)
-        self.settings_channel: TextChannel = self.guild.get_channel(648630396241707029)
+        self.guild: Guild = self.get_guild(GUILD)
+        self.notification_role: Role = self.guild.get_role(NOTIFICATION_ROLE)
+        self.settings_channel: TextChannel = self.guild.get_channel(SETTINGS_CHANNEL)
         async for msg in self.settings_channel.history():
             self.settings_message: Message = msg
             break
 
-    def get_levels(self):
+    def get_levels(self, category: str) -> List[int]:
         out = []
         for role in self.guild.roles:
-            match = re.match("^" + role_name(r"(\d+)") + "$", role.name)
+            match = re.match("^" + role_name(category, r"(\d+)") + "$", role.name)
             if match:
                 out.append(int(match.group(1)))
         return sorted(out)
 
-    def get_max_level_id(self):
-        return max(self.get_levels(), default=0)
+    def get_categories(self) -> List[str]:
+        out = []
+        for category in self.guild.categories:
+            match = re.match(f"^{category_name('(.*)')}$", category.name)
+            if match:
+                out.append(match.group(1))
+        return out
 
-    def get_level_count(self):
-        return len(self.get_levels())
+    def get_max_level_id(self, category: str) -> int:
+        return max(self.get_levels(category), default=0)
 
-    async def is_authorized(self, user: User):
+    def get_level_count(self, category: str) -> int:
+        return len(self.get_levels(category))
+
+    async def is_authorized(self, user: User) -> bool:
         member: Optional[Member] = self.guild.get_member(user.id)
         return member and member.guild_permissions.administrator
 
-    def get_level(self, level_id):
-        level_channel: Optional[TextChannel] = utils.get(self.level_category.channels, name=level_name(level_id))
-        solution_channel: Optional[TextChannel] = utils.get(
-            self.solution_category.channels, name=solution_name(level_id)
-        )
-        role: Optional[Role] = utils.get(self.guild.roles, name=role_name(level_id))
+    def get_level(self, category, level_id):
+        category_channel, _ = self.get_category(category)
+        if category_channel is None:
+            return None, None, None
+
+        level_channel: Optional[TextChannel] = utils.get(category_channel.channels, name=level_name(level_id))
+        solution_channel: Optional[TextChannel] = utils.get(category_channel.channels, name=solution_name(level_id))
+        role: Optional[Role] = utils.get(self.guild.roles, name=role_name(category, level_id))
         return level_channel, solution_channel, role
 
-    async def sort_roles(self):
-        levels = self.get_levels()
-        roles = [utils.get(self.guild.roles, name=role_name(level)) for level in levels]
-        while True:
-            all_ok = True
-            for i in reversed(range(len(levels))):
-                if roles[i].position != i + 1:
-                    all_ok = False
-                    await roles[i].edit(position=i + 1)
-            if all_ok:
-                break
+    def get_category(self, category):
+        category_channel: Optional[CategoryChannel] = utils.get(self.guild.categories, name=category_name(category))
+        riddle_master_role: Optional[Role] = utils.get(self.guild.roles, name=riddle_master_name(category))
+        return category_channel, riddle_master_role
 
     async def on_member_join(self, member: Member):
         if member.guild.id != self.guild.id:
             return
 
-        await member.send(open("welcome.txt").read().format(user=member.mention))
+        await member.send(open("texts/welcome_dm.txt").read().format(user=member.mention))
 
-        _, _, role = self.get_level(1)
-        if role is not None:
-            await member.add_roles(role)
+        for category in self.get_categories():
+            _, _, role = self.get_level(category, 1)
+            if role is not None:
+                await member.add_roles(role)
 
     async def on_raw_reaction_add(self, payload):
         if self.settings_message is None or self.settings_message.id != payload.message_id:
@@ -129,79 +148,87 @@ class Bot(Client):
 
         if message.content.startswith("$"):
             cmd, *args = message.content[1:].split()
-            if cmd == "stats":
+            if cmd == "add":
                 if not await self.is_authorized(message.author):
                     await message.channel.send("You are not authorized to use this command!")
                     return
 
-                embed: Embed = Embed(title="Stats", color=0x008800)
-                for level_id in self.get_levels():
-                    level_channel, solution_channel, role = self.get_level(level_id)
-                    status = f"Level Channel: {level_channel.mention}\n"
-                    status += f"Solution Channel: {solution_channel and solution_channel.mention}\n"
-                    if isinstance(message.channel, TextChannel):
-                        status += f"Role: {role and role.mention}"
-                    embed.add_field(name=f"Level {level_id}", value=status, inline=True)
-                await message.channel.send(embed=embed)
-            elif cmd == "add":
-                if not await self.is_authorized(message.author):
-                    await message.channel.send("You are not authorized to use this command!")
+                if len(args) < 2 or args[0] not in ("category", "level"):
+                    await message.channel.send("usage: $add category|level <category-name>")
                     return
+                category = " ".join(args[1:])
+                if args[0] == "level":
+                    category_channel, _ = self.get_category(category)
+                    if category_channel is None:
+                        await message.channel.send("Category does not exist!")
+                        return
 
-                level_id = self.get_max_level_id() + 1
-                await message.channel.send(f"Creating Level {level_id}")
+                    level_id = self.get_max_level_id(category) + 1
+                    await message.channel.send(f"Creating Level {level_id}")
 
-                role: Role = await self.guild.create_role(name=role_name(level_id), hoist=True)
+                    role: Role = await self.guild.create_role(name=role_name(category, level_id))
 
-                await self.sort_roles()
-
-                level_channel: TextChannel = await self.level_category.create_text_channel(
-                    level_name(level_id),
-                    overwrites={
-                        self.guild.default_role: PermissionOverwrite(read_messages=False),
-                        role: PermissionOverwrite(read_messages=True, send_messages=False),
-                    },
-                )
-                solution_channel: TextChannel = await self.solution_category.create_text_channel(
-                    solution_name(level_id),
-                    overwrites={
-                        self.guild.default_role: PermissionOverwrite(read_messages=False),
-                        self.guild.me: PermissionOverwrite(read_messages=True),
-                    },
-                )
-                await message.channel.send(
-                    f"Level {level_id} has been created.\n"
-                    f"Level channel: {level_channel.mention}\n"
-                    f"Solution channel: {solution_channel.mention}\n"
-                    f"Role: {role.mention}"
-                )
-                await message.channel.send("Now send me the riddle!")
-                riddle = await self.wait_for(
-                    "message", check=lambda m: m.channel == message.channel and m.author == message.author
-                )
-                await level_channel.send(embed=(Embed(title=f"Level {level_id}", description=riddle.content)))
-                await message.channel.send("Riddle has been created! :+1:")
-                await message.channel.send(f"Now go to {solution_channel.mention} and send the solution.")
-                await message.channel.send(f"After that type `$notify {level_id}` to notify the Riddle Masters :wink:")
+                    level_channel: TextChannel = await category_channel.create_text_channel(
+                        level_name(level_id),
+                        overwrites={
+                            self.guild.default_role: PermissionOverwrite(read_messages=False),
+                            role: PermissionOverwrite(read_messages=True, send_messages=False, add_reactions=False),
+                            self.guild.me: PermissionOverwrite(read_messages=True, send_messages=True),
+                        },
+                    )
+                    solution_channel: TextChannel = await category_channel.create_text_channel(
+                        solution_name(level_id),
+                        overwrites={
+                            self.guild.default_role: PermissionOverwrite(read_messages=False),
+                            self.guild.me: PermissionOverwrite(read_messages=True),
+                        },
+                    )
+                    await message.channel.send(
+                        f"Level {level_id} has been created.\n"
+                        f"Level channel: {level_channel.mention}\n"
+                        f"Solution channel: {solution_channel.mention}\n"
+                        f"Role: {role.mention}"
+                    )
+                    await message.channel.send("Now send me the riddle!")
+                    riddle = await self.wait_for(
+                        "message", check=lambda m: m.channel == message.channel and m.author == message.author
+                    )
+                    await level_channel.send(
+                        embed=(create_embed(title=f"{category} - Level {level_id}", description=riddle.content))
+                    )
+                    await message.channel.send("Riddle has been created! :+1:")
+                    await message.channel.send(f"Now go to {solution_channel.mention} and send the solution.")
+                    await message.channel.send(
+                        f"After that type `$notify {category} {level_id}` to notify the Riddle Masters :wink:"
+                    )
+                else:
+                    await self.guild.create_category(category_name(category))
+                    riddle_master_role: Role = await self.guild.create_role(name=riddle_master_name(category))
+                    for member in self.guild.members:
+                        if member.id != self.user.id:
+                            await member.add_roles(riddle_master_role)
+                    await message.channel.send("Category has been created!")
             elif cmd == "notify":
                 if not await self.is_authorized(message.author):
                     await message.channel.send("You are not authorized to use this command!")
                     return
 
-                if not args:
-                    await message.channel.send("usage: $notify <level-id>")
+                if len(args) < 2:
+                    await message.channel.send("usage: $notify <category> <level-id>")
                     return
                 else:
-                    if not args[0].isnumeric():
+                    if not args[-1].isnumeric():
                         await message.channel.send("Level ID has to be numeric!")
                         return
-                    level_id = int(args[0])
+                    category = " ".join(args[:-1])
+                    level_id = int(args[-1])
 
-                level_channel, _, role = self.get_level(level_id)
+                level_channel, _, role = self.get_level(category, level_id)
                 notify_count = 0
                 for member in self.guild.members:
-                    if self.riddle_master_role in member.roles:
-                        await member.remove_roles(self.riddle_master_role)
+                    _, riddle_master_role = self.get_category(category)
+                    if riddle_master_role in member.roles:
+                        await member.remove_roles(riddle_master_role)
                         await member.add_roles(role)
                         if self.notification_role in member.roles:
                             await member.send(
@@ -217,105 +244,154 @@ class Bot(Client):
                     await message.channel.send("You are not authorized to use this command!")
                     return
 
-                if not args:
-                    await message.channel.send("usage: $delete <level-id> [<level-id>]")
+                if not (
+                    (len(args) >= 2 and args[0] == "category")
+                    or (len(args) >= 3 and args[0] == "level")
+                    or (len(args) >= 4 and args[0] == "levels")
+                ):
+                    await message.channel.send(
+                        "usage: $delete category <category>\n"
+                        "   or: $delete level[s] <category> <level-id> [<level-id>]"
+                    )
                     return
+
+                if args[0] == "category":
+                    category = " ".join(args[1:])
+                    category_channel, riddle_master_role = self.get_category(category)
+                    for level in self.get_levels(category):
+                        level_channel, solution_channel, role = self.get_level(category, level)
+                        if level_channel:
+                            await level_channel.delete()
+                        if solution_channel:
+                            await solution_channel.delete()
+                        if role:
+                            await role.delete()
+                    if category_channel:
+                        await category_channel.delete()
+                    if riddle_master_role:
+                        await riddle_master_role.delete()
+
+                    await message.channel.send("Category has been deleted")
                 else:
-                    if (not args[0].isnumeric()) or (len(args) > 1 and not args[1].isnumeric()):
-                        await message.channel.send("Level ID has to be numeric!")
-                        return
-                    from_level_id = int(args[0])
-                    to_level_id = int(args[1]) if len(args) > 1 else from_level_id
-
-                for level_id in range(from_level_id, to_level_id + 1):
-                    level_channel, solution_channel, role = self.get_level(level_id)
-                    existed = False
-                    if level_channel:
-                        await level_channel.delete()
-                        existed = True
-                    if solution_channel:
-                        await solution_channel.delete()
-                        existed = True
-                    if role:
-                        await role.delete()
-                        existed = True
-
-                    if existed:
-                        await message.channel.send(f"Level {level_id} has been deleted")
+                    if args[0] == "level":
+                        category = " ".join(args[1:-1])
+                        if not args[-1].isnumeric():
+                            await message.channel.send("Level ID has to be numeric!")
+                            return
+                        from_level_id = int(args[-1])
+                        to_level_id = from_level_id
                     else:
-                        await message.channel.send(f"Level {level_id} does not exist")
-                for level in self.get_levels():
-                    if level <= to_level_id:
-                        continue
-                    level_channel, solution_channel, role = self.get_level(level)
-                    level_count = to_level_id - from_level_id + 1
-                    await level_channel.edit(name=level_name(level - level_count))
-                    await solution_channel.edit(name=solution_name(level - level_count))
-                    await role.edit(name=role_name(level - level_count))
+                        category = " ".join(args[1:-2])
+                        if (not args[-1].isnumeric()) or (not args[-2].isnumeric()):
+                            await message.channel.send("Level ID has to be numeric!")
+                            return
+                        from_level_id = int(args[-2])
+                        to_level_id = int(args[-1])
+
+                    for level_id in range(from_level_id, to_level_id + 1):
+                        level_channel, solution_channel, role = self.get_level(category, level_id)
+                        existed = False
+                        if level_channel:
+                            await level_channel.delete()
+                            existed = True
+                        if solution_channel:
+                            await solution_channel.delete()
+                            existed = True
+                        if role:
+                            await role.delete()
+                            existed = True
+
+                        if existed:
+                            await message.channel.send(f"Level {level_id} has been deleted")
+                        else:
+                            await message.channel.send(f"Level {level_id} does not exist")
+                    for level in self.get_levels(category):
+                        if level <= to_level_id:
+                            continue
+                        level_channel, solution_channel, role = self.get_level(category, level)
+                        level_count = to_level_id - from_level_id + 1
+                        await level_channel.edit(name=level_name(level - level_count))
+                        await solution_channel.edit(name=solution_name(level - level_count))
+                        await role.edit(name=role_name(category, level - level_count))
 
                 await message.channel.send("Done")
-
-            elif cmd == "sort":
-                if not await self.is_authorized(message.author):
-                    await message.channel.send("You are not authorized to use this command!")
-                    return
-
-                await self.sort_roles()
-                await message.channel.send("Roles have been sorted.")
             elif cmd == "info":
-                await message.channel.send(f"{self.get_level_count()} Levels")
+                embed = create_embed(title="Info")
+                for category in self.get_categories():
+                    embed.add_field(name=category, value=f"{self.get_level_count(category)} Levels", inline=False)
+                await message.channel.send(embed=embed)
             elif cmd == "setup":
                 if not await self.is_authorized(message.author):
                     await message.channel.send("You are not authorized to use this command!")
                     return
 
                 self.settings_message = await self.settings_channel.send(
-                    embed=Embed(
-                        title="Settings",
-                        description="Reagiere mit :bell: auf diese Nachricht, um Benachrichtigungen "
-                        "über neue Rätsel zu erhalten",
-                    )
+                    embed=create_embed(title="Settings", description=open("texts/settings.txt").read())
                 )
                 await self.settings_message.add_reaction(BELL)
-            else:
-                await message.channel.send("Unknown command!")
-            return
-
-        if isinstance(message.channel, DMChannel):
-            member: Member = self.guild.get_member(message.author.id)
-            for role in member.roles:
-                if role.id == self.riddle_master_role.id:
-                    await message.channel.send("Hey, du hast bereits alle Rätsel gelöst :wink:")
+            elif cmd == "solve":
+                if not isinstance(message.channel, DMChannel):
+                    await message.delete()
+                    await message.channel.send(
+                        f"Hey, {message.author.mention}! Schick mir deine Lösung bitte privat :wink:"
+                    )
                     return
 
-                match = re.match("^" + role_name(r"(\d+)") + "$", role.name)
-                if match:
-                    level_id = int(match.group(1))
-                    break
-            else:
-                level_channel, _, role = self.get_level(1)
-                if role is not None:
-                    await member.add_roles(role)
-                    await message.channel.send(
-                        "Sorry, du hattest anscheinend noch keine Level-Rolle.\n"
-                        f"Schau jetzt mal in {level_channel.mention} :wink:"
-                    )
-                return
+                if not args:
+                    await message.channel.send("usage: $solve <category>")
+                    return
 
-            _, solution_channel, old_role = self.get_level(level_id)
-            async for msg in solution_channel.history():
-                if re.match(msg.content.lower(), message.content.lower()):
-                    level_channel, _, new_role = self.get_level(level_id + 1)
-                    await member.remove_roles(old_role)
-                    if new_role is not None:
-                        await member.add_roles(new_role)
-                        await message.channel.send(f"Richtig! Du hast jetzt Zugriff auf {level_channel.mention}!")
-                    else:
-                        await member.add_roles(self.riddle_master_role)
-                        await message.channel.send(f"Richtig! Leider war das aber schon das letzte Rätsel.")
-                    break
+                category = " ".join(args)
+                _, riddle_master_role = self.get_category(category)
+                if riddle_master_role is None:
+                    await message.channel.send("Tut mir leid, diese Kategorie kenne ich nicht :shrug:")
+                    return
+
+                answer = (
+                    await self.wait_for(
+                        "message", check=lambda m: m.channel == message.channel and m.author == message.author
+                    )
+                ).content
+
+                await message.channel.send("Hm, mal schauen, ob das richtig ist...")
+                await asyncio.sleep(2)
+
+                member: Member = self.guild.get_member(message.author.id)
+                for role in member.roles:
+                    if role.id == riddle_master_role.id:
+                        await message.channel.send("Hey, du hast bereits alle Rätsel gelöst :wink:")
+                        return
+
+                    match = re.match("^" + role_name(category, r"(\d+)") + "$", role.name)
+                    if match:
+                        level_id = int(match.group(1))
+                        break
+                else:
+                    level_channel, _, role = self.get_level(category, 1)
+                    if role is not None:
+                        await member.add_roles(role)
+                        await message.channel.send(
+                            "Sorry, du hattest anscheinend noch keine Level-Rolle.\n"
+                            f"Schau jetzt mal in {level_channel.mention} :wink:"
+                        )
+                    return
+
+                _, solution_channel, old_role = self.get_level(category, level_id)
+                async for msg in solution_channel.history():
+                    if re.match(msg.content.lower(), answer.lower()):
+                        level_channel, _, new_role = self.get_level(category, level_id + 1)
+                        await member.remove_roles(old_role)
+                        if new_role is not None:
+                            await member.add_roles(new_role)
+                            await message.channel.send(f"Richtig! Du hast jetzt Zugriff auf {level_channel.mention}!")
+                        else:
+                            await member.add_roles(riddle_master_role)
+                            await message.channel.send(f"Richtig! Leider war das aber schon das letzte Rätsel.")
+                        break
+                else:
+                    await message.channel.send(f"Deine Antwort zu Level {level_id} ist leider falsch.")
             else:
-                await message.channel.send(f"Deine Antwort zu Level {level_id} ist leider falsch.")
+                await message.channel.send("Unknown command!")
 
 
 Bot().run(os.environ["TOKEN"])

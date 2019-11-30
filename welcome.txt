@@ -1,2 +1,0 @@
-Hallo {user}, schön dich hier Willkommen zu heißen!
-Du bist hier auf dem Riddler Server, ich bin gespannt wieviel du lösen kannst.
