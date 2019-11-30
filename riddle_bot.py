@@ -51,8 +51,11 @@ def riddle_master_name(category):
     return f"Master of {category}"
 
 
-def category_name(category_id, category):
-    return f"{category_id} - {category} - Levels"
+def category_name(category_id, category, escaped=False):
+    if escaped:
+        return fr"\[{category_id}\] {category} - Levels"
+    else:
+        return f"[{category_id}] {category} - Levels"
 
 
 class Bot(Client):
@@ -85,7 +88,7 @@ class Bot(Client):
     def get_categories(self) -> List[Tuple[int, str]]:
         out = []
         for category in self.guild.categories:
-            match = re.match("^" + category_name(r"(\d+)", "(.*)") + "$", category.name)
+            match = re.match("^" + category_name(r"(\d+)", "(.*)", escaped=True) + "$", category.name)
             if match:
                 category_id, name = match.groups()
                 out.append((int(category_id), name))
@@ -117,10 +120,11 @@ class Bot(Client):
     def get_category(self, *, name=None, category_id=None):
         assert name is not None or category_id is not None
         category_channel: Optional[CategoryChannel] = None
+
+        regex_id = str(category_id or r"\d+")
+        regex_name = name or ".*"
         for cat in self.guild.categories:
-            match = re.match(
-                "^" + category_name("(" + str(category_id or r"\d+") + ")", "(" + (name or ".*") + ")") + "$", cat.name
-            )
+            match = re.match("^" + category_name(f"({regex_id})", f"({regex_name})", escaped=True) + "$", cat.name,)
             if match:
                 category_id, name = match.groups()
                 category_id = int(category_id)
@@ -209,7 +213,11 @@ class Bot(Client):
                         "message", check=lambda m: m.channel == message.channel and m.author == message.author
                     )
                     await level_channel.send(
-                        embed=(create_embed(title=f"{cat_name} - Level {level_id}", description=riddle.content))
+                        embed=(
+                            create_embed(
+                                title=f"[{category}] {cat_name} - Level {level_id}", description=riddle.content
+                            )
+                        )
                     )
                     await message.channel.send("Riddle has been created! :+1:")
                     await message.channel.send(f"Now go to {solution_channel.mention} and send the solution.")
@@ -324,16 +332,18 @@ class Bot(Client):
                         if level <= to_level_id:
                             continue
                         level_channel, solution_channel, role = self.get_level(cat_name, level)
-                        level_count = to_level_id - from_level_id + 1
-                        await level_channel.edit(name=level_name(level - level_count))
-                        await solution_channel.edit(name=solution_name(level - level_count))
-                        await role.edit(name=role_name(cat_name, level - level_count))
+                        await level_channel.edit(name=level_name(level - (to_level_id - from_level_id + 1)))
+                        await solution_channel.edit(name=solution_name(level - (to_level_id - from_level_id + 1)))
+                        await role.edit(name=role_name(cat_name, level - (to_level_id - from_level_id + 1)))
 
                 await message.channel.send("Done")
             elif cmd == "info":
                 embed = create_embed(title="Info")
-                for _, cat_name in self.get_categories():
-                    embed.add_field(name=cat_name, value=f"{self.get_level_count(cat_name)} Levels", inline=False)
+                for cat_id, cat_name in self.get_categories():
+                    count = self.get_level_count(cat_name)
+                    embed.add_field(
+                        name=f"[{cat_id}] {cat_name}", value=f"{count} Level" + "s" * (count != 1), inline=False
+                    )
                 await message.channel.send(embed=embed)
             elif cmd == "setup":
                 if not await self.is_authorized(message.author):
@@ -365,12 +375,11 @@ class Bot(Client):
                 member: Member = self.guild.get_member(message.author.id)
                 for role in member.roles:
                     if role.id == riddle_master_role.id:
-                        await message.channel.send("Hey, du hast bereits alle Rätsel gelöst :wink:")
+                        await message.channel.send("Hey, du hast bereits alle Rätsel in dieser Kategorie gelöst :wink:")
                         return
 
-                    match = re.match("^" + role_name(cat_name, r"(\d+)") + "$", role.name)
-                    if match:
-                        level_id = int(match.group(1))
+                    if re.match("^" + role_name(cat_name, r"(\d+)") + "$", role.name):
+                        level_id = int(re.match("^" + role_name(cat_name, r"(\d+)") + "$", role.name).group(1))
                         break
                 else:
                     level_channel, _, role = self.get_level(cat_name, 1)
@@ -394,7 +403,7 @@ class Bot(Client):
 
                 _, solution_channel, old_role = self.get_level(cat_name, level_id)
                 async for msg in solution_channel.history():
-                    if re.match(msg.content.lower(), answer.lower()):
+                    if re.match(f"^{msg.content.lower()}$", answer.lower()):
                         level_channel, _, new_role = self.get_level(cat_name, level_id + 1)
                         await member.remove_roles(old_role)
                         if new_role is not None:
@@ -406,8 +415,33 @@ class Bot(Client):
                         break
                 else:
                     await message.channel.send(f"Deine Antwort zu Level {level_id} ist leider falsch.")
+            elif cmd == "fix":
+                await self.fix_member(self.guild.get_member(message.author.id))
+                await message.channel.send("Done")
+            elif cmd == "fixall":
+                if not await self.is_authorized(message.author):
+                    await message.channel.send("You are not authorized to use this command!")
+                    return
+
+                for member in self.guild.members:
+                    if member != self.user:
+                        await self.fix_member(member)
+                await message.channel.send("Done")
             else:
                 await message.channel.send("Unknown command!")
+
+    async def fix_member(self, member: Member):
+        for cat_id, cat_name in self.get_categories():
+            _, _, _, riddle_master_role = self.get_category(category_id=cat_id)
+
+            for role in member.roles:
+                if role.id == riddle_master_role.id:
+                    break
+                elif re.match("^" + role_name(cat_name, r"(\d+)") + "$", role.name):
+                    break
+            else:
+                _, _, role = self.get_level(cat_name, 1)
+                await member.add_roles(role or riddle_master_role)
 
 
 Bot().run(os.environ["TOKEN"])
