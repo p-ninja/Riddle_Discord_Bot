@@ -508,7 +508,11 @@ class Bot(Client):
                 embed.add_field(name="TOTAL", value=f"{total} Points", inline=False)
                 await message.channel.send(embed=embed)
             elif cmd == "help":
-                await message.channel.send(open("texts/help.txt").read().format(prefix=PREFIX))
+                response = "```\n"
+                if await self.is_authorized(message.author):
+                    response += open("texts/admin_commands.txt").read().format(prefix=PREFIX) + "\n"
+                response += open("texts/user_commands.txt").read().format(prefix=PREFIX) + "\n```"
+                await message.channel.send(response)
             else:
                 await message.channel.send(f"Unknown command! Type `{PREFIX}help` to get a list of commands!")
 

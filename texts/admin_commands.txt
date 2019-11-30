@@ -1,4 +1,3 @@
-```
 Admin commands:
 {prefix}add category|level <category>
 {prefix}notify <category-id> <level-id>
@@ -6,10 +5,3 @@ Admin commands:
 {prefix}delete level[s] <category-id> <level-id> [<level-id>]
 {prefix}setup
 {prefix}fixall
-
-User commands:
-{prefix}info
-{prefix}score
-{prefix}solve <category-id>
-{prefix}fix
-```

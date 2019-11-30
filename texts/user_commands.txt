@@ -1,0 +1,5 @@
+User commands:
+{prefix}info
+{prefix}score
+{prefix}solve <category-id>
+{prefix}fix
