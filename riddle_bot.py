@@ -434,11 +434,11 @@ class Bot(Client):
                     return
 
                 if not args:
-                    await message.channel.send(f"usage: {PREFIX}solve <category-id>")
+                    await message.channel.send(f"usage: {PREFIX}solve <category-id> [<solution>]")
                     return
 
-                category = " ".join(args)
-                _, cat_name, _, riddle_master_role, _ = self.get_category(category_id=category)
+                answer = " ".join(args[1:])
+                _, cat_name, _, riddle_master_role, _ = self.get_category(category_id=args[0])
                 if riddle_master_role is None:
                     await message.channel.send("Tut mir leid, diese Kategorie kenne ich nicht :shrug:")
                     return
@@ -462,12 +462,13 @@ class Bot(Client):
                         )
                     return
 
-                await message.channel.send("Ok, jetzt schick mir bitte die Lösung!")
-                answer = (
-                    await self.wait_for(
-                        "message", check=lambda m: m.channel == message.channel and m.author == message.author
-                    )
-                ).content
+                if not answer:
+                    await message.channel.send("Ok, jetzt schick mir bitte die Lösung!")
+                    answer = (
+                        await self.wait_for(
+                            "message", check=lambda m: m.channel == message.channel and m.author == message.author
+                        )
+                    ).content
 
                 await message.channel.send("Hm, mal schauen, ob das richtig ist...")
                 await asyncio.sleep(2)
