@@ -18,8 +18,8 @@ from discord import (
     User,
     DMChannel,
     Color,
+    TextChannel,
 )
-from discord import TextChannel
 
 BELL = "🔔"
 
@@ -217,7 +217,7 @@ class Bot(Client):
                     return
                 category = " ".join(args[1:])
                 if args[0] == "level":
-                    _, cat_name, category_channel, _, _ = self.get_category(category_id=category)
+                    _, cat_name, category_channel, riddle_master_role, _ = self.get_category(category_id=category)
                     if category_channel is None:
                         await message.channel.send("Category does not exist!")
                         return
@@ -227,11 +227,23 @@ class Bot(Client):
 
                     role: Role = await self.guild.create_role(name=role_name(cat_name, level_id))
 
+                    for level in self.get_levels(cat_name):
+                        if level == level_id:
+                            continue
+
+                        level_channel, _, _ = self.get_level(cat_name, level)
+                        await level_channel.set_permissions(
+                            role, read_messages=True, send_messages=False,
+                        )
+
                     level_channel: TextChannel = await category_channel.create_text_channel(
                         level_name(level_id),
                         overwrites={
                             self.guild.default_role: PermissionOverwrite(read_messages=False),
                             role: PermissionOverwrite(read_messages=True, send_messages=False, add_reactions=False),
+                            riddle_master_role: PermissionOverwrite(
+                                read_messages=True, send_messages=False, add_reactions=False
+                            ),
                             self.guild.me: PermissionOverwrite(read_messages=True, send_messages=True),
                         },
                     )
