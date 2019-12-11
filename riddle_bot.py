@@ -22,6 +22,8 @@ from discord import (
 )
 
 BELL = "🔔"
+THUMBSUP = "👍"
+THUMBSDOWN = "👎"
 
 config: dict = json.load(open("config.json"))
 GUILD: int = config["guild"]
@@ -264,13 +266,15 @@ class Bot(Client):
                     riddle = await self.wait_for(
                         "message", check=lambda m: m.channel == message.channel and m.author == message.author
                     )
-                    await level_channel.send(
+                    riddle_message: Message = await level_channel.send(
                         embed=(
                             create_embed(
                                 title=f"[{category}] {cat_name} - Level {level_id}", description=riddle.content
                             )
                         )
                     )
+                    await riddle_message.add_reaction(THUMBSUP)
+                    await riddle_message.add_reaction(THUMBSDOWN)
                     await message.channel.send("Riddle has been created! :+1:")
                     await message.channel.send(f"Now go to {solution_channel.mention} and send the solution.")
                     await message.channel.send(
