@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import random
@@ -19,6 +20,7 @@ from discord import (
     DMChannel,
     Color,
     TextChannel,
+    File,
 )
 
 BELL = "🔔"
@@ -608,6 +610,90 @@ class Bot(Client):
                             break
                 embed.add_field(name="TOTAL", value=f"{total} Points", inline=False)
                 await message.channel.send(embed=embed)
+            elif cmd == "send":
+                if not await self.is_authorized(message.author):
+                    await message.channel.send("You are not authorized to use this command!")
+                    return
+
+                if len(args) != 2 or args[0] not in ("text", "embed"):
+                    await message.channel.send(f"usage: {PREFIX}send text|embed <channel>")
+                    return
+
+                channel_id = int(re.match(r"^(<#)?(\d+)(?(1)>)$", args[1]).group(2))
+                channel: TextChannel = self.get_channel(channel_id)
+                if channel is None:
+                    await message.channel.send("Channel does not exist.")
+                    return
+
+                if args[0] == "text":
+                    await message.channel.send("Now send me the message!")
+                    msg: Message = await self.wait_for(
+                        "message", check=lambda m: m.channel == message.channel and m.author == message.author
+                    )
+                    files = []
+                    for attachment in msg.attachments:
+                        file = io.BytesIO()
+                        await attachment.save(file)
+                        files.append(File(file, filename=attachment.filename, spoiler=attachment.is_spoiler()))
+                    await channel.send(content=msg.content, files=files)
+                else:
+                    await message.channel.send("Send me the title of the embed!")
+                    title = (
+                        await self.wait_for(
+                            "message", check=lambda m: m.channel == message.channel and m.author == message.author
+                        )
+                    ).content
+                    await message.channel.send("Ok, now send me the content of the embed!")
+                    content = (
+                        await self.wait_for(
+                            "message", check=lambda m: m.channel == message.channel and m.author == message.author
+                        )
+                    ).content
+                    await channel.send(embed=create_embed(title=title, description=content))
+            elif cmd == "edit":
+                if not await self.is_authorized(message.author):
+                    await message.channel.send("You are not authorized to use this command!")
+                    return
+
+                if len(args) != 3 or args[0] not in ("text", "embed") or not args[2].isnumeric():
+                    await message.channel.send(f"usage: {PREFIX}edit text|embed <channel> <message-id>")
+                    return
+
+                channel_id = int(re.match(r"^(<#)?(\d+)(?(1)>)$", args[1]).group(2))
+                channel: TextChannel = self.get_channel(channel_id)
+                if channel is None:
+                    await message.channel.send("Channel does not exist.")
+                    return
+                msg_to_edit: Optional[Message] = await channel.fetch_message(int(args[2]))
+                if msg_to_edit is None:
+                    await msg_to_edit.channel.send("Message does not exist.")
+                    return
+
+                if args[0] == "text":
+                    await message.channel.send("Now send me the new message!")
+                    msg: Message = await self.wait_for(
+                        "message", check=lambda m: m.channel == message.channel and m.author == message.author
+                    )
+                    files = []
+                    for attachment in msg.attachments:
+                        file = io.BytesIO()
+                        await attachment.save(file)
+                        files.append(File(file, filename=attachment.filename, spoiler=attachment.is_spoiler()))
+                    await msg_to_edit.edit(content=msg.content, files=files)
+                else:
+                    await message.channel.send("Send me the new title of the embed!")
+                    title = (
+                        await self.wait_for(
+                            "message", check=lambda m: m.channel == message.channel and m.author == message.author
+                        )
+                    ).content
+                    await message.channel.send("Ok, now send me the new content of the embed!")
+                    content = (
+                        await self.wait_for(
+                            "message", check=lambda m: m.channel == message.channel and m.author == message.author
+                        )
+                    ).content
+                    await msg_to_edit.edit(embed=create_embed(title=title, description=content))
             elif cmd == "help":
                 response = "```\n"
                 if await self.is_authorized(message.author):

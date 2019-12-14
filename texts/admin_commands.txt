@@ -6,3 +6,5 @@ Admin commands:
 {prefix}rename <category-id> <name>
 {prefix}setup
 {prefix}fixall
+{prefix}send text|embed <channel>
+{prefix}edit text|embed <channel> <message-id>
