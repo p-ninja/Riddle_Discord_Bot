@@ -29,6 +29,7 @@ config: dict = json.load(open("config.json"))
 GUILD: int = config["guild"]
 NOTIFICATION_ROLE: int = config["notification_role"]
 SETTINGS_CHANNEL: int = config["settings_channel"]
+MASTER_OF_EVERYTHING_ROLE: int = config["master_of_everything_role"]
 PREFIX = config["prefix"]
 
 
@@ -68,6 +69,7 @@ class Bot(Client):
         self.guild: Optional[Guild] = None
         self.notification_role: Optional[Role] = None
         self.settings_channel: Optional[TextChannel] = None
+        self.master_of_everything_role: Optional[Role] = None
         self.settings_message: Optional[Message] = None
 
     async def on_ready(self):
@@ -76,6 +78,7 @@ class Bot(Client):
         self.guild: Guild = self.get_guild(GUILD)
         self.notification_role: Role = self.guild.get_role(NOTIFICATION_ROLE)
         self.settings_channel: TextChannel = self.guild.get_channel(SETTINGS_CHANNEL)
+        self.master_of_everything_role: Role = self.guild.get_role(MASTER_OF_EVERYTHING_ROLE)
         async for msg in self.settings_channel.history():
             self.settings_message: Message = msg
             break
@@ -144,14 +147,18 @@ class Bot(Client):
 
         await member.send(open("texts/welcome_dm.txt").read().format(user=member.mention))
 
+        master_of_everything = True
         for _, cat_name in self.get_categories():
             _, _, role = self.get_level(cat_name, 1)
             if role is not None:
+                master_of_everything = False
                 await member.add_roles(role)
             else:
                 _, _, _, riddle_master_role, _ = self.get_category(name=cat_name)
                 await member.add_roles(riddle_master_role)
             await self.update_leaderboard(cat_name)
+        if master_of_everything:
+            await member.add_roles(self.master_of_everything_role)
 
     async def on_raw_reaction_add(self, payload):
         if self.settings_message is None or self.settings_message.id != payload.message_id:
@@ -202,6 +209,18 @@ class Bot(Client):
         embed = create_embed(title="Leaderboard", description="\n".join(description))
 
         await message.edit(embed=embed)
+
+    async def update_master_of_everything_role(self, member: Member):
+        master_of_everything = True
+        for _, cat_name in self.get_categories():
+            _, _, _, riddle_master_role, _ = self.get_category(name=cat_name)
+            if riddle_master_role not in member.roles:
+                master_of_everything = False
+                break
+        if master_of_everything:
+            await member.add_roles(self.master_of_everything_role)
+        else:
+            await member.remove_roles(self.master_of_everything_role)
 
     async def on_message(self, message: Message):
         if message.author == self.user:
@@ -320,7 +339,7 @@ class Bot(Client):
                 notify_count = 0
                 for member in self.guild.members:
                     if riddle_master_role in member.roles:
-                        await member.remove_roles(riddle_master_role)
+                        await member.remove_roles(riddle_master_role, self.master_of_everything_role)
                         await member.add_roles(role)
                         if self.notification_role in member.roles:
                             await member.send(
@@ -407,6 +426,9 @@ class Bot(Client):
                         await role.edit(name=role_name(cat_name, level - (to_level_id - from_level_id + 1)))
                     await self.update_leaderboard(cat_name)
 
+                for member in self.guild.members:
+                    await self.update_master_of_everything_role(member)
+
                 await message.channel.send("Done")
             elif cmd == "info":
                 embed = create_embed(title="Info")
@@ -483,7 +505,10 @@ class Bot(Client):
                             await message.channel.send(f"Richtig! Du hast jetzt Zugriff auf {level_channel.mention}!")
                         else:
                             await member.add_roles(riddle_master_role)
-                            await message.channel.send(f"Richtig! Leider war das aber schon das letzte Rätsel.")
+                            await self.update_master_of_everything_role(member)
+                            await message.channel.send(
+                                f"Richtig! Leider war das aber schon das letzte Rätsel dieser Kategorie."
+                            )
                         break
                 else:
                     await message.channel.send(f"Deine Antwort zu Level {level_id} ist leider falsch.")
