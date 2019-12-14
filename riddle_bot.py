@@ -30,6 +30,7 @@ GUILD: int = config["guild"]
 NOTIFICATION_ROLE: int = config["notification_role"]
 SETTINGS_CHANNEL: int = config["settings_channel"]
 MASTER_OF_EVERYTHING_ROLE: int = config["master_of_everything_role"]
+GENERAL_CHAT: int = config["general_chat"]
 PREFIX = config["prefix"]
 
 
@@ -70,6 +71,7 @@ class Bot(Client):
         self.notification_role: Optional[Role] = None
         self.settings_channel: Optional[TextChannel] = None
         self.master_of_everything_role: Optional[Role] = None
+        self.general_chat: Optional[TextChannel] = None
         self.settings_message: Optional[Message] = None
 
     async def on_ready(self):
@@ -79,6 +81,7 @@ class Bot(Client):
         self.notification_role: Role = self.guild.get_role(NOTIFICATION_ROLE)
         self.settings_channel: TextChannel = self.guild.get_channel(SETTINGS_CHANNEL)
         self.master_of_everything_role: Role = self.guild.get_role(MASTER_OF_EVERYTHING_ROLE)
+        self.general_chat: TextChannel = self.guild.get_channel(GENERAL_CHAT)
         async for msg in self.settings_channel.history():
             self.settings_message: Message = msg
             break
@@ -86,6 +89,8 @@ class Bot(Client):
     def get_levels(self, category: str) -> List[int]:
         out = []
         for role in self.guild.roles:
+            if role.id == MASTER_OF_EVERYTHING_ROLE:
+                continue
             match = re.match("^" + role_name(category, r"(\d+)") + "$", role.name)
             if match:
                 out.append(int(match.group(1)))
@@ -427,7 +432,8 @@ class Bot(Client):
                     await self.update_leaderboard(cat_name)
 
                 for member in self.guild.members:
-                    await self.update_master_of_everything_role(member)
+                    if member != self.user:
+                        await self.update_master_of_everything_role(member)
 
                 await message.channel.send("Done")
             elif cmd == "info":
@@ -509,6 +515,15 @@ class Bot(Client):
                             await message.channel.send(
                                 f"Richtig! Leider war das aber schon das letzte Rätsel dieser Kategorie."
                             )
+                            if self.master_of_everything_role in member.roles:
+                                await self.general_chat.send(
+                                    f"{member.mention} hat jetzt **alle Rätsel aller Kategorien gelöst!**\n"
+                                    f"**Herzlichen Glückwunsch!** :tada:"
+                                )
+                            else:
+                                await self.general_chat.send(
+                                    f"{member.mention} hat jetzt alle Rätsel der Kategorie {cat_name} gelöst! :tada:"
+                                )
                         break
                 else:
                     await message.channel.send(f"Deine Antwort zu Level {level_id} ist leider falsch.")
