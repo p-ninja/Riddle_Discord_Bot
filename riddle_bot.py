@@ -1,8 +1,8 @@
-import asyncio
 import json
 import os
 import random
 import re
+import time
 from typing import Optional, List, Tuple
 
 from discord import (
@@ -73,6 +73,8 @@ class Bot(Client):
         self.master_of_everything_role: Optional[Role] = None
         self.general_chat: Optional[TextChannel] = None
         self.settings_message: Optional[Message] = None
+
+        self.cooldowns = {}
 
     async def on_ready(self):
         print(f"Logged in as {self.user}")
@@ -465,13 +467,27 @@ class Bot(Client):
                     await message.channel.send(f"usage: {PREFIX}solve <category-id> [<solution>]")
                     return
 
+                member: Member = self.guild.get_member(message.author.id)
+
+                now = time.time()
+                cooldown, wrong_answers = self.cooldowns.get(member.id, (0, 0))
+                seconds = round(cooldown - now)
+                if seconds > 0:
+                    minutes, seconds = divmod(seconds, 60)
+                    hours, minutes = divmod(minutes, 60)
+                    await message.channel.send(
+                        f"Da deine letzte Antwort falsch war, musst du noch etwas warten, "
+                        f"bevor du es noch einmal versuchen kannst.\n"
+                        f"Verbleibende Zeit: `{hours:02d}:{minutes:02d}:{seconds:02d}`"
+                    )
+                    return
+
                 answer = " ".join(args[1:])
                 _, cat_name, _, riddle_master_role, _ = self.get_category(category_id=args[0])
                 if riddle_master_role is None:
                     await message.channel.send("Tut mir leid, diese Kategorie kenne ich nicht :shrug:")
                     return
 
-                member: Member = self.guild.get_member(message.author.id)
                 for role in member.roles:
                     if role.id == riddle_master_role.id:
                         await message.channel.send("Hey, du hast bereits alle Rätsel in dieser Kategorie gelöst :wink:")
@@ -498,9 +514,6 @@ class Bot(Client):
                         )
                     ).content
 
-                await message.channel.send("Hm, mal schauen, ob das richtig ist...")
-                await asyncio.sleep(2)
-
                 _, solution_channel, old_role = self.get_level(cat_name, level_id)
                 async for msg in solution_channel.history():
                     if re.match(f"^{msg.content.lower()}$", answer.lower()):
@@ -524,9 +537,13 @@ class Bot(Client):
                                 await self.general_chat.send(
                                     f"{member.mention} hat jetzt alle Rätsel der Kategorie {cat_name} gelöst! :tada:"
                                 )
+                        cooldown = wrong_answers = 0
                         break
                 else:
                     await message.channel.send(f"Deine Antwort zu Level {level_id} ist leider falsch.")
+                    cooldown = now + min(2 ** wrong_answers, 24 * 60 * 60)
+                    wrong_answers += 1
+                self.cooldowns[member.id] = (cooldown, wrong_answers)
                 await self.update_leaderboard(cat_name)
             elif cmd == "fix":
                 await self.fix_member(self.guild.get_member(message.author.id))
