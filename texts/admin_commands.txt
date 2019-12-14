@@ -3,5 +3,6 @@ Admin commands:
 {prefix}notify <category-id> <level-id>
 {prefix}delete category <category-id>
 {prefix}delete level[s] <category-id> <level-id> [<level-id>]
+{prefix}rename <category-id> <name>
 {prefix}setup
 {prefix}fixall

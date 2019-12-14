@@ -438,6 +438,33 @@ class Bot(Client):
                         await self.update_master_of_everything_role(member)
 
                 await message.channel.send("Done")
+            elif cmd == "rename":
+                if not await self.is_authorized(message.author):
+                    await message.channel.send("You are not authorized to use this command!")
+                    return
+
+                if len(args) < 2 or not args[0].isnumeric():
+                    await message.channel.send(f"usage: {PREFIX}rename <category-id> <name>")
+                    return
+
+                category = args[0]
+                new_name = " ".join(args[1:])
+                cat_id, cat_name, category_channel, riddle_master_role, leaderboard = self.get_category(
+                    category_id=category
+                )
+                for level in self.get_levels(cat_name):
+                    level_channel, _, role = self.get_level(cat_name, level)
+                    await role.edit(name=role_name(new_name, level))
+                    async for msg in level_channel.history(oldest_first=True):
+                        if msg.author == self.user and msg.embeds:
+                            embed: Embed = msg.embeds[0]
+                            embed.title = f"[{category}] {new_name} - Level {level}"
+                            await msg.edit(embed=embed)
+                            break
+
+                await category_channel.edit(name=category_name(cat_id, new_name))
+                await riddle_master_role.edit(name=riddle_master_name(new_name))
+                await message.channel.send("Done!")
             elif cmd == "info":
                 embed = create_embed(title="Info")
                 for cat_id, cat_name in self.get_categories():
